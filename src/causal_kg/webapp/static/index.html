@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>causal-kg-agent</title>
+<script src="https://unpkg.com/vis-network@9/standalone/umd/vis-network.min.js"></script>
+<style>
+  body { font-family: -apple-system, sans-serif; margin: 0; display: flex; height: 100vh; }
+  #chat { width: 40%; display: flex; flex-direction: column; padding: 16px; box-sizing: border-box; border-right: 1px solid #ddd; }
+  #graph { flex: 1; }
+  #log { flex: 1; overflow-y: auto; margin-bottom: 12px; }
+  .msg { margin-bottom: 14px; }
+  .question { font-weight: 600; }
+  .citations { color: #555; font-size: 0.85em; margin-top: 4px; }
+  input { width: 100%; padding: 8px; box-sizing: border-box; }
+  button { margin-top: 8px; padding: 8px 16px; }
+</style>
+</head>
+<body>
+  <div id="chat">
+    <h2>Causal Knowledge Graph Agent</h2>
+    <div id="log"></div>
+    <input id="question" placeholder="Ask a question about GLP-1 receptor agonists..." />
+    <button onclick="ask()">Ask</button>
+  </div>
+  <div id="graph"></div>
+
+<script>
+let network = null;
+
+async function loadGraph() {
+  const res = await fetch('/graph');
+  const data = await res.json();
+  render(data.nodes.map(n => ({ id: n.name, label: n.name, group: n.type })), data.edges.map(e => ({ from: e.source, to: e.target, label: e.type, arrows: 'to' })));
+}
+
+function render(nodes, edges) {
+  const container = document.getElementById('graph');
+  network = new vis.Network(container, { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, {
+    nodes: { shape: 'dot', size: 14, font: { size: 14 } },
+    edges: { font: { size: 10, align: 'middle' } },
+    physics: { stabilization: true },
+  });
+}
+
+function highlight(touched) {
+  if (!network) return;
+  const nodeIds = touched.nodes;
+  network.body.data.nodes.update(nodeIds.map(id => ({ id, color: '#ff6b6b' })));
+}
+
+async function ask() {
+  const question = document.getElementById('question').value;
+  if (!question) return;
+  const log = document.getElementById('log');
+  log.innerHTML += `<div class="msg question">${question}</div>`;
+
+  const res = await fetch('/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+  });
+  const data = await res.json();
+  log.innerHTML += `<div class="msg">${data.answer}<div class="citations">Citations: ${data.citations.join(', ') || 'none'}</div></div>`;
+  log.scrollTop = log.scrollHeight;
+  highlight(data.graph_touched);
+  document.getElementById('question').value = '';
+}
+
+loadGraph();
+</script>
+</body>
+</html>

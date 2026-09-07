@@ -1,0 +1,26 @@
+[project]
+name = "causal-kg-agent"
+version = "0.1.0"
+description = "LLM-provider-agnostic agent combining RAG and knowledge-graph traversal over biomedical literature"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40",
+    "neo4j>=5.20",
+    "sentence-transformers>=3.0",
+    "pydantic>=2.7",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "numpy>=1.26",
+    "requests>=2.32",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
