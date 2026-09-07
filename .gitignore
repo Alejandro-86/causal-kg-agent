@@ -6,4 +6,5 @@ __pycache__/
 .pytest_cache/
 models_cache/
 data/embeddings.npz
+data/relations.json
 .coverage

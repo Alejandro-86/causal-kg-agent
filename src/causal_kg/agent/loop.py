@@ -15,6 +15,7 @@ or borrowed citation is not a "please don't do that" prompt instruction,
 it is a rejected answer, regenerated up to twice, then a refusal.
 """
 
+import logging
 import re
 
 from causal_kg.graph.neo4j_repo import Neo4jCausalGraph
@@ -66,6 +67,8 @@ explicitly rather than guessing."""
 
 PMID_PATTERN = re.compile(r"PMID:\s*(\d+)")
 
+logger = logging.getLogger(__name__)
+
 
 class CausalGraphAgent:
     def __init__(self, llm: LLMClient, vector_store: VectorStore, graph: Neo4jCausalGraph) -> None:
@@ -77,6 +80,8 @@ class CausalGraphAgent:
         """Run a tool call, return (content string for the LLM, structured
         data for the caller to inspect — e.g. which graph nodes/edges were
         touched, for the webapp's visualization)."""
+        logger.info("tool_call: %s(%s)", name, arguments)
+
         if name == "search_abstracts":
             results = self._vector_store.search(arguments["query"])
             content = "\n".join(

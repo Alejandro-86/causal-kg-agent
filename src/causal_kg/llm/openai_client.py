@@ -6,16 +6,41 @@ demo if the strongest possible answers matter more than cost.
 """
 
 import json
+import os
+import tempfile
 from typing import Any
 
+import certifi
+import httpx2
 from openai import OpenAI
 
 from causal_kg.llm.base import CompletionResult, LLMClient, ToolCall
 
 
+def _build_http_client() -> httpx2.Client:
+    """openai's vendored httpx client ships its own internal CA bundle,
+    which was missing a root needed to validate api.openai.com's current
+    cert chain (independently confirmed: the top-level `certifi` package
+    validates fine, httpx2's own default does not). Force it to use the
+    real certifi bundle; if a corporate proxy CA is present (e.g. this
+    machine's SSL_CERT_FILE), append it too so this also works on
+    networks that actually do TLS-inspect."""
+    bundle = certifi.where()
+    extra = os.environ.get("SSL_CERT_FILE")
+    if extra and os.path.exists(extra):
+        cache_dir = tempfile.gettempdir()
+        combined = os.path.join(cache_dir, "causal_kg_combined_cacert.pem")
+        with open(bundle, "rb") as f1, open(extra, "rb") as f2:
+            data = f1.read() + b"\n" + f2.read()
+        with open(combined, "wb") as out:
+            out.write(data)
+        bundle = combined
+    return httpx2.Client(verify=bundle)
+
+
 class OpenAIClient(LLMClient):
     def __init__(self, api_key: str, model: str = "gpt-4o-mini") -> None:
-        self._client = OpenAI(api_key=api_key)
+        self._client = OpenAI(api_key=api_key, http_client=_build_http_client())
         self._model = model
 
     def complete_structured(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
