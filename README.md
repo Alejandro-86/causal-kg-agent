@@ -161,7 +161,14 @@ webapp — see "Known limitations" below for why.
    ```
    Open `http://localhost:8001`. Ask a question in the chat panel; watch
    the graph panel highlight the nodes/edges a graph-traversal answer
-   actually used.
+   actually used. Try:
+   - *"What does the literature say about digital engagement and
+     semaglutide persistence for weight loss?"* — RAG (`search_abstracts`)
+   - *"What downstream conditions could treating obesity with GLP-1
+     receptor agonists be associated with?"* — graph traversal
+     (`traverse_graph`)
+   - *"What effect do GLP-1 receptor agonists have on insulin
+     secretion?"* — the agent picks a tool on its own, no hardcoded rule
 
 6. **Run the tests** (fully mocked, no network/API calls needed)
    ```bash
