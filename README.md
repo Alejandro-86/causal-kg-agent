@@ -21,10 +21,27 @@ Question ──► Agent ──┬──► search_abstracts()   [plain RAG: vec
                       output IN CODE, not just prompted
 ```
 
-Built as a live demo topic: **GLP-1 receptor agonists** (semaglutide,
-tirzepatide, etc.) — mechanism-of-action / target-validation questions,
-mirroring the kind of biomedical knowledge-graph work this project is
-built to speak to in an interview context.
+Demo topic: **GLP-1 receptor agonists** (semaglutide, tirzepatide, etc.) —
+mechanism-of-action and target-validation questions over real PubMed
+abstracts, not synthetic data.
+
+## What it does
+
+Ask it a question about GLP-1 receptor agonist literature, and the agent
+decides for itself which retrieval mechanism fits:
+
+- **"What does the literature say about digital engagement and semaglutide
+  persistence for weight loss?"** — a single-document lookup question, so
+  the agent calls `search_abstracts()`, a plain vector-similarity search
+  over cached abstract embeddings.
+- **"What downstream conditions could treating obesity with GLP-1 receptor
+  agonists be associated with?"** — a relational, multi-hop question no
+  single abstract states outright, so the agent calls `traverse_graph()`,
+  running a Cypher traversal over the causal knowledge graph and returning
+  typed, directional, multi-hop paths.
+
+Every answer cites its sources as `(PMID: 12345678)`, and that citation is
+verified in code (see below) — not just requested in the prompt.
 
 ## Why two retrieval mechanisms, not just RAG
 
@@ -41,8 +58,7 @@ Every call site talks to `causal_kg.llm.base.LLMClient`, never to a
 provider SDK directly (see `src/causal_kg/llm/`). `OpenAIClient` is the
 concrete implementation used here; swapping providers means writing one
 new class and changing one construction site (`webapp/main.py`,
-`scripts/build_pipeline.py`) — nothing else changes. Same pattern as the
-`financial-qa-agent` portfolio project.
+`scripts/build_pipeline.py`) — nothing else changes.
 
 ## Guardrail: citation-health is code, not a prompt instruction
 
@@ -53,120 +69,151 @@ answer with a regex and checks it in code against the PMIDs the tool calls
 *in that conversation* actually returned. A fabricated or borrowed citation
 is rejected and the model is told exactly why and asked to retry (up to 2
 times), then the system refuses outright rather than presenting an
-unverifiable answer. Same "prompt = please, code = guarantee" philosophy as
-the read-only, citation-grounded MCP servers already in production use.
+unverifiable answer.
+
+## How the data is built
+
+```
+PubMed E-utilities (free, no key)  ──►  data/abstracts.json  (cached)
+        │
+        ├──►  sentence-transformers embeddings  ──►  data/embeddings.npz
+        │
+        └──►  LLM extraction (schema-constrained,   ──►  data/relations.json
+               PMID stamped from source abstract         (cached)
+               in code, not trusted from the model)
+                        │
+                        ▼
+                Neo4j (idempotent MERGE load)
+```
+
+`scripts/build_pipeline.py` orchestrates all of this and is idempotent —
+every step checks its cache file first, so re-running costs nothing once
+the caches exist.
+
+## Requirements
+
+- Docker (for Neo4j)
+- Python 3.11+
+- An **OpenAI API key** — required. PubMed ingestion is free, but relation
+  extraction and the agent itself both call the OpenAI API, so nothing
+  past ingestion runs without one.
 
 ## Quickstart
 
 ```bash
-cp .env.example .env               # fill in OPENAI_API_KEY
-make up                            # Neo4j on 7475 (browser) / 7688 (bolt)
+cp .env.example .env               # fill in OPENAI_API_KEY (required — see Requirements)
+docker compose up -d               # Neo4j on 7475 (browser) / 7688 (bolt)
                                     # — deliberately NOT the default ports,
                                     # to not clash with other local demo repos
-make install
-make pipeline                      # ingest -> extract -> load graph -> build index
-make run                           # http://localhost:8001
-make test
-```
-
-**If you're on a machine behind a corporate TLS-inspecting proxy** (this one
-is): `export SSL_CERT_FILE=~/combined-certs.pem` before running the
-pipeline or webapp — see "Rough edges" below for why.
-
-### Cold-start runbook for demo day — verified end-to-end 2026-09-07
-
-This exact sequence was actually run from a cold container restart
-(`docker compose down` including the network, then back up) and reproduced
-the identical graph (235 nodes / 177 relationships) with zero new API
-calls, since extraction is cached to disk:
-
-```bash
-cd ~/IdeaProjects/causal-kg-agent
-docker compose up -d
-source .venv/bin/activate
-export PYTHONPATH=src
-export SSL_CERT_FILE=~/combined-certs.pem   # corporate proxy machines only
-python scripts/build_pipeline.py   # only re-runs steps whose cache is missing
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+python scripts/build_pipeline.py   # ingest -> extract -> load graph -> build index
 uvicorn causal_kg.webapp.main:app --reload --port 8001 --app-dir src
-# open http://localhost:8001
-# Neo4j Browser (optional, for a live visual graph): http://localhost:7475
-#   MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100
+pytest tests/ -v
 ```
 
-## Status as of 2026-09-07 — fully verified end-to-end, real API calls
+**If you're on a machine behind a corporate TLS-inspecting proxy**, set
+`SSL_CERT_FILE` to a combined CA bundle before running the pipeline or
+webapp — see "Known limitations" below for why.
 
-- **Ingestion:** 36 real PubMed abstracts, cached to `data/abstracts.json`.
-- **Vector index:** real `all-MiniLM-L6-v2` embeddings over all 36
-  abstracts, cached to `data/embeddings.npz` (gitignored, regenerate via
-  `make pipeline`).
-- **Extraction (real OpenAI calls, gpt-4o-mini):** 36/36 abstracts
-  processed, **178 relations extracted**, zero retries needed, zero
-  fabricated citations found on manual spot-check of 5 random relations
-  (4 exact substring matches against source text, 1 accurate light
-  paraphrase — verified by hand against the source abstract).
-- **Neo4j:** loaded and confirmed via direct Cypher count: **235 nodes,
-  177 relationships** (one pair of relations MERGEd onto the same edge —
-  expected, idempotent-loader behavior). Relationship type breakdown:
-  CAUSES 43, INCREASES 33, ASSOCIATED_WITH 32, TREATS 26, TARGETS 22,
-  DECREASES 21.
-- **Tests:** `pytest tests/ -v` → **7/7 passed**, both before and after
-  the real extraction/graph-load run (no regressions).
-- **Live agent, 3 real questions run end-to-end** (see `scripts/demo_questions.py`):
-  1. *"What does the literature say about digital engagement and
-     semaglutide persistence for weight loss?"* → correctly called
-     `search_abstracts` (RAG), answered with 1 real citation.
-  2. *"What downstream conditions could treating obesity with GLP-1
-     receptor agonists be associated with?"* → correctly called
-     `traverse_graph` (KG, multi-hop), answered citing 2 real PMIDs,
-     `graph_touched` populated with 16 real nodes / 25 real edges for
-     the webapp's visual highlight.
-  3. *"What effect do GLP-1 receptor agonists have on insulin
-     secretion?"* → see "Rough edges" below, this one surfaced a real
-     gap worth knowing before the interview.
-- **Webapp:** `GET /` → 200, `GET /graph` → real 235/177 graph dump,
-  `POST /ask` → real grounded answer with a real citation. Full HTTP
-  round-trip confirmed via curl.
-- **Cost:** ~45 real OpenAI calls total across extraction + agent runs +
-  ad-hoc checks, all on `gpt-4o-mini`. Consistent with the original
-  estimate — comfortably under $0.05 for everything run so far, nowhere
-  near the $25 credit.
+### Step by step
 
-## Rough edges to know before the interview
+1. **Clone and configure**
+   ```bash
+   git clone git@github.com:Alejandro-86/causal-kg-agent.git
+   cd causal-kg-agent
+   cp .env.example .env
+   ```
+   Fill in `OPENAI_API_KEY` in `.env` — **required**, the pipeline's
+   extraction step and the agent itself both call the OpenAI API (never
+   commit `.env`, it's gitignored).
 
-- **A real fix was needed to run OpenAI calls on this machine at all:**
-  the `openai` SDK's vendored HTTP client ships its own internal CA
-  bundle, which was missing a root needed to validate `api.openai.com`'s
-  current cert chain — independent of whether an actual corporate proxy
-  is in the path that day. Fixed in `llm/openai_client.py` by explicitly
-  using the top-level `certifi` package's bundle (and merging in
-  `SSL_CERT_FILE` if present, for genuine proxy environments). Good
-  incidental talking point: shows you debug from first principles
-  (isolated it down to "which HTTP client, which CA bundle" via curl vs
-  openssl vs raw httpx before touching code) rather than guessing.
-- **A real, honest grounding gap, found by actually running the agent:**
-  question 3 above got retrieval results that were all topically
-  adjacent but none specifically addressed insulin-secretion mechanism.
-  The model correctly said "no specific information was found in the
-  search" — genuinely true, verified by hand-checking the 5 retrieved
-  abstracts — but then answered anyway from its own general knowledge,
-  uncited. The **hard, code-level citation guardrail correctly did not
-  fire** (no fabricated PMID was cited, so there was nothing to reject)
-  — but the *softer* system-prompt instruction ("say so explicitly
-  rather than guessing") was only half-followed. This is a real
-  "prompt = please, code = guarantee" gap: catching *fabricated*
-  citations is enforced in code; catching *silent fallback to
-  parametric knowledge with zero citations* is not yet. A natural
-  next guardrail (not yet built) would reject any final answer with
-  zero citations when tool results were returned but a citation-worthy
-  claim is made. Good to have this ready if the interviewer probes deeper.
-- **36 abstracts vs Biorelate's 50M+ documents** — this is a miniature,
-  built to demonstrate the pipeline shape (extraction → graph → grounded
-  retrieval), not a claim of production scale. Say this upfront if asked.
-- **Tool-choice isn't perfectly consistent:** one `/ask` question about
-  cardiovascular events used `search_abstracts` even though the exact
-  relationship existed in the graph (seen in question 2's traversal).
-  Expected LLM non-determinism in tool selection, not a code defect —
-  worth knowing so it doesn't look like a bug live.
-- **Neo4j depth:** entity extraction is LLM-assigned, open-vocabulary
-  types (not a curated ontology) — a deliberate simplicity choice for a
-  demo, not a claim of ontology-engineering depth.
+2. **Start Neo4j**
+   ```bash
+   docker compose up -d
+   ```
+   Requires Docker (Docker Desktop or equivalent) with Compose bundled —
+   most installs already include it. Runs on `localhost:7475` (browser
+   UI) / `localhost:7688` (bolt) — non-default ports, chosen to avoid
+   clashing with other local Neo4j containers.
+
+3. **Create a virtualenv and install dependencies**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -e ".[dev]"
+   ```
+
+4. **Build the pipeline** (ingest → extract → load graph → build index)
+   ```bash
+   python scripts/build_pipeline.py
+   ```
+   Ingestion pulls real abstracts from PubMed (free, no key needed) the
+   first time, then caches to `data/abstracts.json`. Extraction calls the
+   LLM once per abstract to build `data/relations.json`, then loads it
+   into Neo4j. Both steps are skipped on subsequent runs if their cache
+   file already exists — only the Neo4j load re-runs (it's an idempotent
+   `MERGE`, so no duplicates).
+
+5. **Run the webapp**
+   ```bash
+   uvicorn causal_kg.webapp.main:app --reload --port 8001 --app-dir src
+   ```
+   Open `http://localhost:8001`. Ask a question in the chat panel; watch
+   the graph panel highlight the nodes/edges a graph-traversal answer
+   actually used.
+
+6. **Run the tests** (fully mocked, no network/API calls needed)
+   ```bash
+   pytest tests/ -v
+   ```
+
+7. **(Optional) Inspect the graph directly** in Neo4j Browser at
+   `http://localhost:7475`:
+   ```cypher
+   MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 100
+   ```
+
+8. **(Optional) Run the demo questions directly against the agent**,
+   bypassing the webapp, with full tool-call tracing printed to the
+   terminal:
+   ```bash
+   python scripts/demo_questions.py
+   ```
+
+## Known limitations
+
+- **Citation regex only captures the first PMID in a grouped citation**
+  like `(PMID: 123, 456)` — it silently misses `456`. A real, known gap,
+  left as-is deliberately rather than risk destabilizing a working,
+  tested system. Fix: capture and split on comma-separated digits, not
+  just the first.
+- **No fallback-to-parametric-knowledge guardrail yet.** The code-level
+  citation check catches *fabricated* PMIDs, but doesn't yet catch a
+  model silently answering from its own general knowledge with zero
+  citations when tool results came back empty or irrelevant. A natural
+  next guardrail would reject any final answer with zero citations when
+  a citation-worthy claim is made.
+- **36 abstracts, not literature-scale.** This is a demonstration of the
+  pipeline shape (extraction → graph → grounded retrieval), not a claim
+  of production scale. No external vector DB is used deliberately, since
+  the corpus is small by design.
+- **Tool choice isn't perfectly deterministic** — the model occasionally
+  picks `search_abstracts` for a question the graph could also answer
+  directly. Expected LLM non-determinism in tool selection, not a code
+  defect.
+- **Entity types are LLM-assigned, open-vocabulary**, not a curated
+  ontology — a deliberate simplicity choice for a small demo corpus, not
+  a claim of ontology-engineering depth.
+- **A real TLS fix was needed to call the OpenAI API at all on some
+  machines:** the `openai` SDK's vendored HTTP client can ship a CA
+  bundle missing a root needed to validate `api.openai.com`'s current
+  cert chain. Fixed in `llm/openai_client.py` by explicitly using the
+  top-level `certifi` package's bundle, merging in `SSL_CERT_FILE` if
+  set for genuine corporate-proxy environments.
+
+## Testing
+
+`pytest tests/ -v` — both test files are fully mocked, zero network calls,
+no API key needed. `test_citation_guardrail.py` covers the fabricated-vs-
+real PMID logic with mock tool results.
