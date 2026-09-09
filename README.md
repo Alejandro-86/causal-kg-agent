@@ -90,17 +90,26 @@ PubMed E-utilities (free, no key)  ──►  data/abstracts.json  (cached)
 every step checks its cache file first, so re-running costs nothing once
 the caches exist.
 
+## Requirements
+
+- Docker (for Neo4j)
+- Python 3.11+
+- An **OpenAI API key** — required. PubMed ingestion is free, but relation
+  extraction and the agent itself both call the OpenAI API, so nothing
+  past ingestion runs without one.
+
 ## Quickstart
 
 ```bash
-cp .env.example .env               # fill in OPENAI_API_KEY
-make up                            # Neo4j on 7475 (browser) / 7688 (bolt)
+cp .env.example .env               # fill in OPENAI_API_KEY (required — see Requirements)
+docker compose up -d               # Neo4j on 7475 (browser) / 7688 (bolt)
                                     # — deliberately NOT the default ports,
                                     # to not clash with other local demo repos
-make install
-make pipeline                      # ingest -> extract -> load graph -> build index
-make run                           # http://localhost:8001
-make test
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+python scripts/build_pipeline.py   # ingest -> extract -> load graph -> build index
+uvicorn causal_kg.webapp.main:app --reload --port 8001 --app-dir src
+pytest tests/ -v
 ```
 
 **If you're on a machine behind a corporate TLS-inspecting proxy**, set
@@ -115,27 +124,29 @@ webapp — see "Known limitations" below for why.
    cd causal-kg-agent
    cp .env.example .env
    ```
-   Fill in `OPENAI_API_KEY` in `.env` (never commit this file — it's
-   gitignored).
+   Fill in `OPENAI_API_KEY` in `.env` — **required**, the pipeline's
+   extraction step and the agent itself both call the OpenAI API (never
+   commit `.env`, it's gitignored).
 
 2. **Start Neo4j**
    ```bash
-   make up   # equivalent to: docker compose up -d
+   docker compose up -d
    ```
-   Runs on `localhost:7475` (browser UI) / `localhost:7688` (bolt) —
-   non-default ports, chosen to avoid clashing with other local Neo4j
-   containers.
+   Requires Docker (Docker Desktop or equivalent) with Compose bundled —
+   most installs already include it. Runs on `localhost:7475` (browser
+   UI) / `localhost:7688` (bolt) — non-default ports, chosen to avoid
+   clashing with other local Neo4j containers.
 
-3. **Install dependencies**
+3. **Create a virtualenv and install dependencies**
    ```bash
-   make install   # equivalent to: pip install -e ".[dev]"
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -e ".[dev]"
    ```
-   Use a virtualenv (`python -m venv .venv && source .venv/bin/activate`)
-   first if you don't already have one active.
 
 4. **Build the pipeline** (ingest → extract → load graph → build index)
    ```bash
-   make pipeline   # equivalent to: python scripts/build_pipeline.py
+   python scripts/build_pipeline.py
    ```
    Ingestion pulls real abstracts from PubMed (free, no key needed) the
    first time, then caches to `data/abstracts.json`. Extraction calls the
@@ -146,7 +157,7 @@ webapp — see "Known limitations" below for why.
 
 5. **Run the webapp**
    ```bash
-   make run   # equivalent to: uvicorn causal_kg.webapp.main:app --reload --port 8001 --app-dir src
+   uvicorn causal_kg.webapp.main:app --reload --port 8001 --app-dir src
    ```
    Open `http://localhost:8001`. Ask a question in the chat panel; watch
    the graph panel highlight the nodes/edges a graph-traversal answer
@@ -154,7 +165,7 @@ webapp — see "Known limitations" below for why.
 
 6. **Run the tests** (fully mocked, no network/API calls needed)
    ```bash
-   make test   # equivalent to: pytest tests/ -v
+   pytest tests/ -v
    ```
 
 7. **(Optional) Inspect the graph directly** in Neo4j Browser at
