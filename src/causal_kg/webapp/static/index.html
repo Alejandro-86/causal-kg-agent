@@ -3,69 +3,299 @@
 <head>
 <meta charset="utf-8">
 <title>causal-kg-agent</title>
-<script src="https://unpkg.com/vis-network@9/standalone/umd/vis-network.min.js"></script>
+<script src="https://unpkg.com/echarts@5/dist/echarts.min.js"></script>
 <style>
-  body { font-family: -apple-system, sans-serif; margin: 0; display: flex; height: 100vh; }
-  #chat { width: 40%; display: flex; flex-direction: column; padding: 16px; box-sizing: border-box; border-right: 1px solid #ddd; }
-  #graph { flex: 1; }
-  #log { flex: 1; overflow-y: auto; margin-bottom: 12px; }
-  .msg { margin-bottom: 14px; }
-  .question { font-weight: 600; }
-  .citations { color: #555; font-size: 0.85em; margin-top: 4px; }
-  input { width: 100%; padding: 8px; box-sizing: border-box; }
-  button { margin-top: 8px; padding: 8px 16px; }
+  :root {
+    --surface-1:      #fcfcfb;
+    --page-plane:      #f3f2ee;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --border:         rgba(11,11,11,0.08);
+    --gridline:       #e1e0d9;
+    --shadow:         0 1px 2px rgba(11,11,11,0.04), 0 6px 20px rgba(11,11,11,0.06);
+
+    --brand-1: #2a78d6;   /* drug */
+    --brand-2: #eb6834;   /* protein */
+    --brand-3: #1baf7a;   /* disease */
+    --brand-4: #eda100;   /* pathway */
+    --brand-5: #e87ba4;   /* outcome */
+    --brand-other: #898781;
+    --highlight: #d03b3b;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: var(--page-plane); color: var(--text-primary);
+  }
+
+  header {
+    padding: 16px 24px;
+    background: linear-gradient(120deg, #1c5cab 0%, #2a78d6 55%, #1baf7a 130%);
+    color: #fff; display: flex; align-items: center; gap: 12px;
+    box-shadow: var(--shadow);
+    position: relative; z-index: 2;
+  }
+  header .icon {
+    width: 34px; height: 34px; border-radius: 9px; background: rgba(255,255,255,0.18);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  header h1 { font-size: 16px; margin: 0 0 2px 0; font-weight: 700; letter-spacing: 0.2px; }
+  header p { font-size: 12px; margin: 0; opacity: 0.88; }
+
+  #main { flex: 1; display: flex; min-height: 0; padding: 14px; gap: 14px; }
+
+  #chat {
+    width: 380px; min-width: 300px; display: flex; flex-direction: column;
+    background: var(--surface-1); border-radius: 14px; box-shadow: var(--shadow);
+    padding: 16px; border: 1px solid var(--border);
+  }
+  #log { flex: 1; overflow-y: auto; margin-bottom: 12px; padding-right: 4px; }
+
+  .msg { display: flex; margin-bottom: 14px; gap: 8px; align-items: flex-end; animation: rise 0.25s ease; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .msg.user { justify-content: flex-end; }
+  .avatar {
+    width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #fff;
+  }
+  .msg.user .avatar { background: var(--brand-1); order: 2; }
+  .msg.agent .avatar { background: var(--brand-3); }
+
+  .bubble {
+    max-width: 82%; padding: 10px 13px; border-radius: 13px; font-size: 13.5px;
+    line-height: 1.5; white-space: pre-wrap; box-shadow: var(--shadow);
+  }
+  .msg.user .bubble { background: linear-gradient(135deg, var(--brand-1), #1c5cab); color: #fff; border-bottom-right-radius: 3px; }
+  .msg.agent .bubble { background: #fff; border: 1px solid var(--gridline); border-bottom-left-radius: 3px; }
+
+  .citations { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .citation-pill {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+    background: var(--page-plane); border: 1px solid var(--gridline); color: var(--text-secondary);
+    padding: 2px 8px; border-radius: 20px;
+  }
+  .citation-pill.none { color: var(--text-muted); font-style: italic; }
+
+  .typing { display: flex; gap: 4px; padding: 4px 2px; }
+  .typing span {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted);
+    animation: bounce 1.1s infinite ease-in-out;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.15s; }
+  .typing span:nth-child(3) { animation-delay: 0.30s; }
+  @keyframes bounce { 0%, 60%, 100% { opacity: 0.35; } 30% { opacity: 1; } }
+
+  #inputRow { display: flex; gap: 8px; }
+  #question {
+    flex: 1; padding: 10px 13px; border: 1px solid var(--gridline); border-radius: 10px;
+    font-size: 13.5px; font-family: inherit; background: var(--page-plane);
+  }
+  #question:focus { outline: none; border-color: var(--brand-1); background: #fff; }
+  #askBtn {
+    width: 40px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, var(--brand-1), #1c5cab);
+    color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    box-shadow: var(--shadow); transition: transform 0.1s ease;
+  }
+  #askBtn:active { transform: scale(0.94); }
+  #askBtn:disabled { background: var(--text-muted); cursor: default; }
+
+  #graphPane {
+    flex: 1; position: relative; background: var(--surface-1); border-radius: 14px;
+    box-shadow: var(--shadow); border: 1px solid var(--border); overflow: hidden;
+  }
+  #graph { width: 100%; height: 100%; }
+
+  #graphHint {
+    position: absolute; bottom: 14px; left: 18px; font-size: 11px; color: var(--text-muted);
+    background: rgba(252,252,251,0.9); padding: 4px 10px; border-radius: 20px;
+    border: 1px solid var(--border); pointer-events: none;
+  }
 </style>
 </head>
 <body>
-  <div id="chat">
-    <h2>Causal Knowledge Graph Agent</h2>
-    <div id="log"></div>
-    <input id="question" placeholder="Ask a question about GLP-1 receptor agonists..." />
-    <button onclick="ask()">Ask</button>
+  <header>
+    <div class="icon">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="12" cy="18" r="3"/>
+        <line x1="8.5" y1="7.5" x2="10" y2="16"/><line x1="15.5" y1="7.5" x2="14" y2="16"/><line x1="9" y1="6" x2="15" y2="6"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Causal Knowledge Graph Agent</h1>
+      <p>RAG + Neo4j graph traversal over biomedical literature &middot; every citation checked in code against what the tools actually returned</p>
+    </div>
+  </header>
+
+  <div id="main">
+    <div id="chat">
+      <div id="log"></div>
+      <div id="inputRow">
+        <input id="question" placeholder="Ask about GLP-1 receptor agonists…" autofocus />
+        <button id="askBtn" onclick="ask()" title="Ask">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="graphPane">
+      <div id="graph"></div>
+      <div id="graphHint">Drag to pan &middot; scroll to zoom &middot; click a legend item to isolate a type</div>
+    </div>
   </div>
-  <div id="graph"></div>
 
 <script>
-let network = null;
+const CATEGORY_ORDER = ['drug', 'protein', 'disease', 'pathway', 'outcome', 'other'];
+const CATEGORY_COLOR = {
+  drug: '#2a78d6', protein: '#eb6834', disease: '#1baf7a',
+  pathway: '#eda100', outcome: '#e87ba4', other: '#898781',
+};
+const HIGHLIGHT = '#d03b3b';
+
+function categoryFor(type) {
+  const t = (type || '').toLowerCase();
+  return CATEGORY_ORDER.includes(t) ? t : 'other';
+}
+
+let chart = null;
+let rawNodes = [];
+let rawEdges = [];
 
 async function loadGraph() {
   const res = await fetch('/graph');
   const data = await res.json();
-  render(data.nodes.map(n => ({ id: n.name, label: n.name, group: n.type })), data.edges.map(e => ({ from: e.source, to: e.target, label: e.type, arrows: 'to' })));
+  rawNodes = data.nodes;
+  rawEdges = data.edges;
+  render();
 }
 
-function render(nodes, edges) {
-  const container = document.getElementById('graph');
-  network = new vis.Network(container, { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) }, {
-    nodes: { shape: 'dot', size: 14, font: { size: 14 } },
-    edges: { font: { size: 10, align: 'middle' } },
-    physics: { stabilization: true },
+function render(touchedNodeIds = new Set(), touchedEdgeKeys = new Set()) {
+  const dom = document.getElementById('graph');
+  if (!chart) chart = echarts.init(dom);
+
+  const nodes = rawNodes.map(n => {
+    const cat = categoryFor(n.type);
+    const isTouched = touchedNodeIds.has(n.name);
+    return {
+      id: n.name,
+      name: n.name,
+      category: CATEGORY_ORDER.indexOf(cat),
+      symbolSize: isTouched ? 22 : 13,
+      itemStyle: isTouched ? { borderColor: HIGHLIGHT, borderWidth: 3 } : {},
+      label: { show: isTouched },
+    };
+  });
+
+  const edges = rawEdges.map(e => {
+    const key = `${e.source}|${e.target}`;
+    const isTouched = touchedEdgeKeys.has(key);
+    return {
+      source: e.source, target: e.target, value: e.type,
+      lineStyle: isTouched
+        ? { color: HIGHLIGHT, width: 3, curveness: 0.15 }
+        : { color: '#c3c2b7', width: 1, curveness: 0.15, opacity: 0.55 },
+      label: { show: isTouched, formatter: e.type, fontSize: 10 },
+    };
+  });
+
+  chart.setOption({
+    tooltip: {
+      formatter: p => p.dataType === 'edge'
+        ? `${p.data.source} <b>${p.data.value}</b> ${p.data.target}`
+        : `<b>${p.data.name}</b><br/>${CATEGORY_ORDER[p.data.category] || 'other'}`,
+    },
+    legend: [{
+      data: CATEGORY_ORDER,
+      bottom: 8, left: 'center', textStyle: { color: '#52514e', fontSize: 11 },
+      itemWidth: 12, itemHeight: 12,
+    }],
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      data: nodes,
+      links: edges,
+      categories: CATEGORY_ORDER.map(c => ({ name: c, itemStyle: { color: CATEGORY_COLOR[c] } })),
+      label: { position: 'bottom', fontSize: 9, color: '#52514e' },
+      labelLayout: { hideOverlap: true },
+      emphasis: { focus: 'adjacency', label: { show: true } },
+      force: { repulsion: 90, edgeLength: 60, gravity: 0.12, layoutAnimation: true },
+      edgeSymbol: ['none', 'arrow'],
+      edgeSymbolSize: 6,
+      animationDuration: 500,
+      animationEasingUpdate: 'quinticInOut',
+    }],
   });
 }
 
 function highlight(touched) {
-  if (!network) return;
-  const nodeIds = touched.nodes;
-  network.body.data.nodes.update(nodeIds.map(id => ({ id, color: '#ff6b6b' })));
+  const nodeIds = new Set(touched.nodes || []);
+  const edgeKeys = new Set((touched.edges || []).map(e => `${e.source}|${e.target}`));
+  render(nodeIds, edgeKeys);
+}
+
+function addMessage(role, html) {
+  const log = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  const avatar = `<div class="avatar">${role === 'user' ? 'you' : 'AI'}</div>`;
+  div.innerHTML = `${avatar}<div class="bubble">${html}</div>`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
 }
 
 async function ask() {
-  const question = document.getElementById('question').value;
+  const input = document.getElementById('question');
+  const btn = document.getElementById('askBtn');
+  const question = input.value.trim();
   if (!question) return;
-  const log = document.getElementById('log');
-  log.innerHTML += `<div class="msg question">${question}</div>`;
 
-  const res = await fetch('/ask', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
-  });
-  const data = await res.json();
-  log.innerHTML += `<div class="msg">${data.answer}<div class="citations">Citations: ${data.citations.join(', ') || 'none'}</div></div>`;
-  log.scrollTop = log.scrollHeight;
-  highlight(data.graph_touched);
-  document.getElementById('question').value = '';
+  addMessage('user', escapeHtml(question));
+  input.value = '';
+  input.disabled = true;
+  btn.disabled = true;
+  const typingBubble = addMessage('agent', '<div class="typing"><span></span><span></span><span></span></div>');
+
+  try {
+    const res = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    const data = await res.json();
+    const citationsHtml = (data.citations && data.citations.length)
+      ? data.citations.map(c => `<span class="citation-pill">PMID ${c}</span>`).join('')
+      : '<span class="citation-pill none">no citations</span>';
+    typingBubble.querySelector('.bubble').innerHTML =
+      `${escapeHtml(data.answer)}<div class="citations">${citationsHtml}</div>`;
+    highlight(data.graph_touched || { nodes: [], edges: [] });
+  } catch (err) {
+    typingBubble.querySelector('.bubble').textContent = 'Something went wrong — check the server log.';
+  } finally {
+    input.disabled = false;
+    btn.disabled = false;
+    input.focus();
+  }
 }
+
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+document.getElementById('question').addEventListener('keydown', evt => {
+  if (evt.key === 'Enter') ask();
+});
+window.addEventListener('resize', () => chart && chart.resize());
 
 loadGraph();
 </script>
